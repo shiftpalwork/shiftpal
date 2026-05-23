@@ -1,0 +1,73 @@
+openapi: 3.0.3
+info:
+  title: ShiftPal API
+  version: 1.0.0
+servers:
+  - url: http://localhost:4000
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /swaps:
+    get:
+      summary: List swap requests
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Swap list }
+    post:
+      summary: Create swap request
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requester_shift_id, target_worker_id]
+              properties:
+                requester_shift_id: { type: string, format: uuid }
+                target_worker_id: { type: string, format: uuid }
+                reason: { type: string }
+      responses:
+        "201": { description: Created }
+  /swaps/{id}/peer:
+    patch:
+      summary: Peer accepts or declines a swap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated }
+  /swaps/{id}/supervisor:
+    patch:
+      summary: Supervisor approves or declines a swap
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /payroll/export:
+    get:
+      summary: Export payroll CSV
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, format: date-time }
+      responses:
+        "200": { description: CSV export }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
