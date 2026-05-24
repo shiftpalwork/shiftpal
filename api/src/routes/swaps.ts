@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createSwapSchema, peerSwapDecisionSchema, supervisorSwapDecisionSchema } from "../../../shared/schemas";
+import { createSwapSchema, peerSwapDecisionSchema, supervisorSwapDecisionSchema } from "../../lib/schemas";
 import { supabaseAdmin } from "../lib/supabase";
 import { AuthenticatedRequest, requireAuth, requireSupervisor } from "../middleware/auth";
 

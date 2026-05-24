@@ -1,1 +1,1 @@
-export { createShiftSchema, createSwapSchema } from '../../shared/schemas';
+export { createShiftSchema, createSwapSchema } from '../lib/schemas';

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { Parser } from "json2csv";
-import { payrollExportSchema } from "../../../shared/schemas";
+import { payrollExportSchema } from "../../lib/schemas";
 import { supabaseAdmin } from "../lib/supabase";
 import { AuthenticatedRequest, requireAuth, requireSupervisor } from "../middleware/auth";
 
