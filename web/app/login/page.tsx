@@ -1,88 +1,59 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { useRouter } from "next/navigation";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
-  const router = useRouter();
+  const supabase = createBrowserSupabaseClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  async function handleAuth() {
-    setLoading(true);
+  async function handleLogin() {
     setMessage("");
 
-    const { data: loginData, error: loginError } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    if (!loginError && loginData.user) {
-      router.push("/dashboard");
+    if (error) {
+      setMessage(error.message);
       return;
     }
 
-    const { data: signupData, error: signupError } =
-      await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-    if (signupError) {
-      setMessage(signupError.message);
-      setLoading(false);
-      return;
-    }
-
-    if (signupData.user) {
-      setMessage("Account created successfully. Please login again.");
-    }
-
-    setLoading(false);
+    window.location.href = "/dashboard";
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-xl shadow-md w-full max-w-md">
-        <h1 className="text-4xl font-bold mb-6">Login</h1>
+    <main className="min-h-screen bg-gray-100 p-10">
+      <div className="mx-auto mt-20 max-w-md rounded-2xl bg-white p-8 shadow">
+        <h1 className="mb-6 text-4xl font-bold">Login</h1>
 
         <input
-          type="email"
+          className="mb-4 w-full rounded-lg border p-4"
           placeholder="Email"
-          className="w-full border p-4 rounded-lg mb-4"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
 
         <input
-          type="password"
+          className="mb-4 w-full rounded-lg border p-4"
           placeholder="Password"
-          className="w-full border p-4 rounded-lg mb-4"
+          type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
 
         <button
-          onClick={handleAuth}
-          disabled={loading}
-          className="w-full bg-black text-white p-4 rounded-lg"
+          onClick={handleLogin}
+          className="w-full rounded-lg bg-black p-4 text-white"
         >
-          {loading ? "Loading..." : "Login / Sign Up"}
+          Login
         </button>
 
-        {message && (
-          <p className="mt-4 text-sm text-red-500">{message}</p>
-        )}
+        {message && <p className="mt-4 text-red-600">{message}</p>}
       </div>
     </main>
   );
