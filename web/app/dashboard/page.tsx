@@ -17,6 +17,7 @@ export default function DashboardPage() {
 
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [attendanceCount, setAttendanceCount] = useState(0);
+  const [workerCount, setWorkerCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   async function handleLogout() {
@@ -25,52 +26,47 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    async function loadShifts() {
-      const { data, error } = await supabase
+    async function loadDashboardData() {
+      setLoading(true);
+
+      const { data: shiftData, error: shiftError } = await supabase
         .from("shifts")
-        .select(
-          `
-            id,
-            role_name,
-            location,
-            starts_at,
-            ends_at,
-            status
-          `
-        )
+        .select("id, role_name, location, starts_at, ends_at, status")
         .order("starts_at", { ascending: true });
 
-      if (error) {
-        console.error("Shift loading error:", error);
+      if (shiftError) {
+        console.error("Shift loading error:", shiftError);
       }
 
-if (data) {
-  setShifts(data);
-}
+      setShifts(shiftData ?? []);
 
-const { count, error: attendanceError } = await supabase
-  .from("attendance")
-  .select("*", { count: "exact", head: true });
+      const { count: attendanceTotal, error: attendanceError } = await supabase
+        .from("attendance")
+        .select("*", { count: "exact", head: true });
 
-if (attendanceError) {
-  console.error("Attendance loading error:", attendanceError);
-}
+      if (attendanceError) {
+        console.error("Attendance loading error:", attendanceError);
+      }
 
-setAttendanceCount(count ?? 0);
+      setAttendanceCount(attendanceTotal ?? 0);
 
-setLoading(false);
+      const { count: workerTotal, error: workerError } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true });
+
+      if (workerError) {
+        console.error("Worker loading error:", workerError);
+      }
+
+      setWorkerCount(workerTotal ?? 0);
+      setLoading(false);
     }
 
-    loadShifts();
+    loadDashboardData();
   }, []);
-
-  const scheduledShifts = shifts.filter(
-    (shift) => shift.status === "scheduled"
-  ).length;
 
   return (
     <main className="min-h-screen bg-gray-100">
-      {/* Top Navigation */}
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <div>
@@ -81,30 +77,27 @@ setLoading(false);
           </div>
 
           <nav className="flex items-center gap-6">
-            <a
-              href="/dashboard"
-              className="font-medium text-black transition hover:text-gray-600"
-            >
+            <a href="/dashboard" className="font-medium text-black">
               Dashboard
             </a>
 
             <a
               href="/shifts"
-              className="font-medium text-gray-600 transition hover:text-black"
+              className="font-medium text-gray-600 hover:text-black"
             >
               Shifts
             </a>
 
             <a
               href="/swaps"
-              className="font-medium text-gray-600 transition hover:text-black"
+              className="font-medium text-gray-600 hover:text-black"
             >
               Swaps
             </a>
 
             <button
               onClick={handleLogout}
-              className="rounded-lg border px-4 py-2 text-sm font-medium transition hover:bg-gray-100"
+              className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-100"
             >
               Logout
             </button>
@@ -112,9 +105,7 @@ setLoading(false);
         </div>
       </header>
 
-      {/* Dashboard Content */}
       <section className="mx-auto max-w-7xl px-6 py-10">
-        {/* Welcome */}
         <div className="mb-10">
           <h2 className="text-4xl font-bold tracking-tight text-black">
             Operations Dashboard
@@ -125,12 +116,9 @@ setLoading(false);
           </p>
         </div>
 
-        {/* Metrics */}
         <div className="mb-10 grid gap-6 md:grid-cols-3">
           <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Total Shifts
-            </p>
+            <p className="text-sm font-medium text-gray-500">Total Shifts</p>
 
             <h3 className="mt-4 text-5xl font-bold text-black">
               {shifts.length}
@@ -138,12 +126,10 @@ setLoading(false);
           </div>
 
           <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Scheduled Shifts
-            </p>
+            <p className="text-sm font-medium text-gray-500">Active Workers</p>
 
             <h3 className="mt-4 text-5xl font-bold text-black">
-              {scheduledShifts}
+              {workerCount}
             </h3>
           </div>
 
@@ -153,23 +139,18 @@ setLoading(false);
             </p>
 
             <h3 className="mt-4 text-5xl font-bold text-black">
-             {attendanceCount}
+              {attendanceCount}
             </h3>
           </div>
         </div>
 
-        {/* Shift Feed */}
         <div className="rounded-2xl bg-white p-8 shadow-sm">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h3 className="text-2xl font-bold text-black">
-                Live Shift Feed
-              </h3>
+          <div className="mb-6">
+            <h3 className="text-2xl font-bold text-black">Live Shift Feed</h3>
 
-              <p className="mt-1 text-sm text-gray-500">
-                Real-time operational scheduling activity
-              </p>
-            </div>
+            <p className="mt-1 text-sm text-gray-500">
+              Real-time operational scheduling activity.
+            </p>
           </div>
 
           {loading ? (
@@ -185,7 +166,7 @@ setLoading(false);
               {shifts.map((shift) => (
                 <div
                   key={shift.id}
-                  className="rounded-xl border border-gray-200 p-5 transition hover:border-black"
+                  className="rounded-xl border border-gray-200 p-5 hover:border-black"
                 >
                   <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -198,19 +179,17 @@ setLoading(false);
                       </p>
 
                       <p className="mt-2 text-sm text-gray-600">
-                        {new Date(shift.starts_at).toLocaleString()}
+                        Start: {new Date(shift.starts_at).toLocaleString()}
                       </p>
 
                       <p className="text-sm text-gray-600">
-                        {new Date(shift.ends_at).toLocaleString()}
+                        End: {new Date(shift.ends_at).toLocaleString()}
                       </p>
                     </div>
 
-                    <div>
-                      <span className="rounded-full bg-black px-4 py-2 text-sm font-medium text-white">
-                        {shift.status}
-                      </span>
-                    </div>
+                    <span className="w-fit rounded-full bg-black px-4 py-2 text-sm font-medium text-white">
+                      {shift.status}
+                    </span>
                   </div>
                 </div>
               ))}
