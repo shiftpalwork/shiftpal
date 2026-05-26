@@ -102,6 +102,17 @@ export default function SupervisorPage() {
   </p>
 </a>
 
+<a
+  href="/payroll"
+  className="rounded-2xl bg-white p-6 shadow-sm hover:shadow-md"
+>
+  <h3 className="text-xl font-bold">Payroll Engine</h3>
+
+  <p className="mt-2 text-sm text-gray-500">
+    Review completed attendance records, overtime, hours worked, and estimated pay.
+  </p>
+</a>
+
         </div>
       </section>
     </main>
