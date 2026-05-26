@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
 import { getCurrentUserProfile, type UserProfile } from "@/lib/auth";
+import { NotificationBell } from "@/components/NotificationBell";
 
 type Shift = {
   id: string;
@@ -88,6 +89,22 @@ export default function WorkerPage() {
       });
     });
   }
+
+async function getSupervisorId() {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("role", "supervisor")
+    .limit(1)
+    .single();
+
+  if (error) {
+    console.error("Supervisor lookup error:", error);
+    return null;
+  }
+
+  return data?.id ?? null;
+}
 
   async function loadWorkerData() {
     setLoading(true);
@@ -355,9 +372,19 @@ if (enteredQrToken !== shift.qr_code_token) {
       return;
     }
 
-    setMessage("Absence request submitted successfully.");
-    await loadWorkerData();
-  }
+   const supervisorId = await getSupervisorId();
+
+if (supervisorId) {
+  await supabase.from("notifications").insert({
+    user_id: supervisorId,
+    title: "New Absence Request",
+    message: `${profile.full_name} requested absence for a scheduled shift.`,
+    type: "absence_request",
+  });
+}
+
+setMessage("Absence request submitted successfully.");
+await loadWorkerData();
 
   async function requestSwap(shiftId: string) {
     if (!profile) return;
@@ -389,9 +416,19 @@ if (enteredQrToken !== shift.qr_code_token) {
       return;
     }
 
-    setMessage("Shift swap request submitted successfully.");
-    await loadWorkerData();
-  }
+const supervisorId = await getSupervisorId();
+
+if (supervisorId) {
+  await supabase.from("notifications").insert({
+    user_id: supervisorId,
+    title: "New Shift Swap Request",
+    message: `${profile.full_name} offered a shift for swap.`,
+    type: "swap_request",
+  });
+}
+
+setMessage("Shift swap request submitted successfully.");
+await loadWorkerData();
 
   async function acceptPeerShift(shiftId: string) {
     if (!profile) return;
@@ -412,9 +449,19 @@ if (enteredQrToken !== shift.qr_code_token) {
       return;
     }
 
-    setMessage("Shift acceptance submitted. Waiting for supervisor approval.");
-    await loadWorkerData();
-  }
+const supervisorId = await getSupervisorId();
+
+if (supervisorId) {
+  await supabase.from("notifications").insert({
+    user_id: supervisorId,
+    title: "Shift Swap Accepted",
+    message: `${profile.full_name} accepted a peer shift swap.`,
+    type: "swap_acceptance",
+  });
+}
+
+setMessage("Shift acceptance submitted. Waiting for supervisor approval.");
+await loadWorkerData();
 
   return (
     <main className="min-h-screen bg-gray-100 px-6 py-10">
@@ -442,6 +489,7 @@ if (enteredQrToken !== shift.qr_code_token) {
               onClick={handleLogout}
               className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
             >
+              <NotificationBell />
               Logout
             </button>
           </div>

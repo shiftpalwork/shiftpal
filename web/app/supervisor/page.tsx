@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getCurrentUserProfile, type UserProfile } from "@/lib/auth";
+import { NotificationBell } from "@/components/NotificationBell";
 
 export default function SupervisorPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
