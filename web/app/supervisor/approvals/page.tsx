@@ -7,6 +7,7 @@ import { getCurrentUserProfile, type UserProfile } from "@/lib/auth";
 type AbsenceRequest = {
   id: string;
   worker_id: string;
+  shift_id: string | null;
   reason: string;
   requested_date: string;
   status: string;
@@ -71,12 +72,13 @@ export default function SupervisorApprovalsPage() {
       .from("absence_requests")
       .select(
         `
-        id,
-        worker_id,
-        reason,
-        requested_date,
-        status,
-        created_at,
+id,
+worker_id,
+shift_id,
+reason,
+requested_date,
+status,
+created_at,
         profiles (
           full_name,
           email,
@@ -132,43 +134,79 @@ export default function SupervisorApprovalsPage() {
     loadRequests();
   }, []);
 
-  async function approveAbsence(request: AbsenceRequest) {
-    setMessage("");
+async function approveAbsence(request: AbsenceRequest) {
+  if (!profile) return;
 
-    const { error: requestError } = await supabase
-      .from("absence_requests")
-      .update({
-        status: "approved",
-      })
-      .eq("id", request.id);
+  setMessage("");
 
-    if (requestError) {
-      setMessage(`Absence approval failed: ${requestError.message}`);
-      return;
-    }
+  const { error: requestError } = await supabase
+    .from("absence_requests")
+    .update({
+      status: "approved",
+      approved_by: profile.id,
+      approved_at: new Date().toISOString(),
+      decision_note: "Supervisor approved absence request.",
+    })
+    .eq("id", request.id);
 
-    setMessage("Absence request approved.");
-    await loadRequests();
+  if (requestError) {
+    setMessage(`Absence approval failed: ${requestError.message}`);
+    return;
   }
 
-  async function rejectAbsence(request: AbsenceRequest) {
-    setMessage("");
-
-    const { error: requestError } = await supabase
-      .from("absence_requests")
+  if (request.shift_id) {
+    const { error: shiftError } = await supabase
+      .from("shifts")
       .update({
-        status: "rejected",
+        status: "open",
+        worker_id: null,
       })
-      .eq("id", request.id);
+      .eq("id", request.shift_id);
 
-    if (requestError) {
-      setMessage(`Absence rejection failed: ${requestError.message}`);
+    if (shiftError) {
+      setMessage(`Shift opening failed: ${shiftError.message}`);
       return;
     }
-
-    setMessage("Absence request rejected.");
-    await loadRequests();
   }
+
+  setMessage("Absence approved. Shift is now open for reassignment.");
+  await loadRequests();
+}
+
+async function rejectAbsence(request: AbsenceRequest) {
+  setMessage("");
+
+  const { error: requestError } = await supabase
+    .from("absence_requests")
+    .update({
+      status: "rejected",
+      rejected_at: new Date().toISOString(),
+      decision_note: "Supervisor rejected absence request.",
+    })
+    .eq("id", request.id);
+
+  if (requestError) {
+    setMessage(`Absence rejection failed: ${requestError.message}`);
+    return;
+  }
+
+  if (request.shift_id) {
+    const { error: shiftError } = await supabase
+      .from("shifts")
+      .update({
+        status: "scheduled",
+      })
+      .eq("id", request.shift_id);
+
+    if (shiftError) {
+      setMessage(`Shift restore failed: ${shiftError.message}`);
+      return;
+    }
+  }
+
+  setMessage("Absence rejected. Shift restored to scheduled.");
+  await loadRequests();
+}
 
   async function approveSwap(request: SwapRequest) {
     if (!profile) return;

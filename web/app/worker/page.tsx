@@ -12,6 +12,19 @@ type Shift = {
   ends_at: string;
   status: string;
   worker_id: string;
+  company_id?: string;
+};
+
+type AttendanceRecord = {
+  id: string;
+  shift_id: string;
+  worker_id: string;
+  status: string;
+  check_in: string | null;
+  check_out: string | null;
+  is_late: boolean;
+  minutes_late: number;
+  total_minutes: number;
 };
 
 export default function WorkerPage() {
@@ -20,10 +33,20 @@ export default function WorkerPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [myShifts, setMyShifts] = useState<Shift[]>([]);
   const [availableShifts, setAvailableShifts] = useState<Shift[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<
+    AttendanceRecord[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
   async function loadWorkerData() {
+    setLoading(true);
+
     const currentProfile = await getCurrentUserProfile();
 
     if (!currentProfile) {
@@ -40,7 +63,9 @@ export default function WorkerPage() {
 
     const { data: assignedShifts, error: assignedError } = await supabase
       .from("shifts")
-      .select("id, role_name, location, starts_at, ends_at, status, worker_id")
+      .select(
+        "id, role_name, location, starts_at, ends_at, status, worker_id, company_id"
+      )
       .eq("worker_id", currentProfile.id)
       .order("starts_at", { ascending: true });
 
@@ -48,42 +73,49 @@ export default function WorkerPage() {
       console.error("Worker shift loading error:", assignedError);
     }
 
-const { data: swapRequests, error: swapError } = await supabase
-  .from("shift_swap_requests")
-  .select(`
-    id,
-    status,
-    shift_id,
-    shifts (
-      id,
-      role_name,
-      location,
-      starts_at,
-      ends_at,
-      status,
-      worker_id
-    )
-  `)
-  .eq("status", "pending");
+    const { data: swapRequests, error: swapError } = await supabase
+      .from("shift_swap_requests")
+      .select(`
+        id,
+        status,
+        shift_id,
+        shifts (
+          id,
+          role_name,
+          location,
+          starts_at,
+          ends_at,
+          status,
+          worker_id,
+          company_id
+        )
+      `)
+      .eq("status", "pending");
 
-if (swapError) {
-  console.error("Available shift loading error:", swapError);
-}
+    if (swapError) {
+      console.error("Available shift loading error:", swapError);
+    }
 
-const peerShifts =
-  swapRequests
-    ?.map((request: any) => request.shifts)
-    ?.filter(Boolean)
-    ?.filter(
-      (shift: any) => shift.worker_id !== currentProfile.id
-    ) ?? [];
+    const peerShifts =
+      swapRequests
+        ?.map((request: any) => request.shifts)
+        ?.filter(Boolean)
+        ?.filter((shift: any) => shift.worker_id !== currentProfile.id) ?? [];
 
-    if (peerError) {
-      console.error("Available shift loading error:", peerError);
+    const { data: attendanceData, error: attendanceError } = await supabase
+      .from("attendance")
+      .select(
+        "id, shift_id, worker_id, status, check_in, check_out, is_late, minutes_late, total_minutes"
+      )
+      .eq("worker_id", currentProfile.id);
+
+    if (attendanceError) {
+      console.error("Attendance loading error:", attendanceError);
     }
 
     setMyShifts(assignedShifts ?? []);
-    setAvailableShifts(peerShifts ?? []);
+    setAvailableShifts(peerShifts);
+    setAttendanceRecords((attendanceData ?? []) as AttendanceRecord[]);
     setLoading(false);
   }
 
@@ -91,107 +123,197 @@ const peerShifts =
     loadWorkerData();
   }, []);
 
-async function requestAbsence(shiftId: string) {
-  if (!profile) return;
-
-  setMessage("");
-
-  const shift = myShifts.find((item) => item.id === shiftId);
-
-  if (!shift) {
-    setMessage("Shift not found.");
-    return;
+  function getAttendanceForShift(shiftId: string) {
+    return attendanceRecords.find((record) => record.shift_id === shiftId);
   }
 
-  const requestedDate = shift.starts_at.slice(0, 10);
+  async function clockIn(shift: Shift) {
+    if (!profile) return;
 
-  const { error: requestError } = await supabase
-    .from("absence_requests")
-    .insert({
+    setMessage("");
+
+    const existingRecord = getAttendanceForShift(shift.id);
+
+    if (existingRecord?.check_in) {
+      setMessage("You have already clocked in for this shift.");
+      return;
+    }
+
+    const now = new Date();
+    const scheduledStart = new Date(shift.starts_at);
+
+    const minutesLate = Math.max(
+      0,
+      Math.floor((now.getTime() - scheduledStart.getTime()) / 60000)
+    );
+
+    const { error } = await supabase.from("attendance").insert({
+      shift_id: shift.id,
       worker_id: profile.id,
-      reason: "Personal absence request",
-      requested_date: requestedDate,
-      status: "pending",
+      company_id: profile.company_id,
+      check_in: now.toISOString(),
+      check_out: null,
+      scheduled_start: shift.starts_at,
+      scheduled_end: shift.ends_at,
+      status: "clocked_in",
+      is_late: minutesLate > 0,
+      minutes_late: minutesLate,
+      total_minutes: 0,
     });
 
-  if (requestError) {
-    setMessage(`Absence request failed: ${requestError.message}`);
-    return;
+    if (error) {
+      setMessage(`Clock in failed: ${error.message}`);
+      return;
+    }
+
+    setMessage("Clock in successful.");
+    await loadWorkerData();
   }
 
-  const { error: shiftError } = await supabase
-    .from("shifts")
-    .update({ status: "absence_requested" })
-    .eq("id", shiftId);
+  async function clockOut(shift: Shift) {
+    setMessage("");
 
-  if (shiftError) {
-    setMessage(`Shift update failed: ${shiftError.message}`);
-    return;
+    const existingRecord = getAttendanceForShift(shift.id);
+
+    if (!existingRecord) {
+      setMessage("You must clock in before clocking out.");
+      return;
+    }
+
+    if (existingRecord.check_out) {
+      setMessage("You have already clocked out for this shift.");
+      return;
+    }
+
+    const now = new Date();
+    const checkIn = new Date(existingRecord.check_in ?? now.toISOString());
+
+    const totalMinutes = Math.max(
+      0,
+      Math.floor((now.getTime() - checkIn.getTime()) / 60000)
+    );
+
+    const { error } = await supabase
+      .from("attendance")
+      .update({
+        check_out: now.toISOString(),
+        status: "clocked_out",
+        total_minutes: totalMinutes,
+      })
+      .eq("id", existingRecord.id);
+
+    if (error) {
+      setMessage(`Clock out failed: ${error.message}`);
+      return;
+    }
+
+    setMessage("Clock out successful.");
+    await loadWorkerData();
   }
 
-  setMessage("Absence request submitted successfully.");
-  await loadWorkerData();
-}
+  async function requestAbsence(shiftId: string) {
+    if (!profile) return;
 
-async function requestSwap(shiftId: string) {
-  if (!profile) return;
+    setMessage("");
 
-  setMessage("");
+    const shift = myShifts.find((item) => item.id === shiftId);
 
-  const { error: requestError } = await supabase
-    .from("shift_swap_requests")
-    .insert({
-      requester_id: profile.id,
-      target_worker_id: null,
-      shift_id: shiftId,
-      reason: "Worker requested shift swap",
-      status: "pending",
-    });
+    if (!shift) {
+      setMessage("Shift not found.");
+      return;
+    }
 
-  if (requestError) {
-    setMessage(`Swap request failed: ${requestError.message}`);
-    return;
+    const requestedDate = shift.starts_at.slice(0, 10);
+
+    const { error: requestError } = await supabase
+      .from("absence_requests")
+      .insert({
+        worker_id: profile.id,
+        shift_id: shiftId,
+        reason: "Worker requested absence",
+        requested_date: requestedDate,
+        status: "pending",
+      });
+
+    if (requestError) {
+      setMessage(`Absence request failed: ${requestError.message}`);
+      return;
+    }
+
+    const { error: shiftError } = await supabase
+      .from("shifts")
+      .update({
+        status: "absence_requested",
+      })
+      .eq("id", shiftId);
+
+    if (shiftError) {
+      setMessage(`Shift update failed: ${shiftError.message}`);
+      return;
+    }
+
+    setMessage("Absence request submitted successfully.");
+    await loadWorkerData();
   }
 
-  const { error: shiftError } = await supabase
-    .from("shifts")
-    .update({ status: "swap_requested" })
-    .eq("id", shiftId);
+  async function requestSwap(shiftId: string) {
+    if (!profile) return;
 
-  if (shiftError) {
-    setMessage(`Shift update failed: ${shiftError.message}`);
-    return;
+    setMessage("");
+
+    const { error: requestError } = await supabase
+      .from("shift_swap_requests")
+      .insert({
+        requester_id: profile.id,
+        target_worker_id: null,
+        shift_id: shiftId,
+        reason: "Worker requested shift swap",
+        status: "pending",
+      });
+
+    if (requestError) {
+      setMessage(`Swap request failed: ${requestError.message}`);
+      return;
+    }
+
+    const { error: shiftError } = await supabase
+      .from("shifts")
+      .update({
+        status: "swap_requested",
+      })
+      .eq("id", shiftId);
+
+    if (shiftError) {
+      setMessage(`Shift update failed: ${shiftError.message}`);
+      return;
+    }
+
+    setMessage("Shift swap request submitted successfully.");
+    await loadWorkerData();
   }
 
-  setMessage("Shift swap request submitted successfully.");
-  await loadWorkerData();
-}
+  async function acceptPeerShift(shiftId: string) {
+    if (!profile) return;
 
-async function acceptPeerShift(shiftId: string) {
-  if (!profile) return;
+    setMessage("");
 
-  setMessage("");
+    const { error } = await supabase
+      .from("shift_swap_requests")
+      .update({
+        accepted_by: profile.id,
+        status: "awaiting_supervisor_approval",
+      })
+      .eq("shift_id", shiftId)
+      .eq("status", "pending");
 
-  const { error } = await supabase
-    .from("shift_swap_requests")
-    .update({
-      accepted_by: profile.id,
-      status: "awaiting_supervisor_approval",
-    })
-    .eq("shift_id", shiftId)
-    .eq("status", "pending");
+    if (error) {
+      setMessage(`Could not accept shift: ${error.message}`);
+      return;
+    }
 
-  if (error) {
-    setMessage(`Could not accept shift: ${error.message}`);
-    return;
+    setMessage("Shift acceptance submitted. Waiting for supervisor approval.");
+    await loadWorkerData();
   }
-
-  setMessage(
-    "Shift acceptance submitted. Waiting for supervisor approval."
-  );
-
-  await loadWorkerData();
-}
 
   return (
     <main className="min-h-screen bg-gray-100 px-6 py-10">
@@ -203,16 +325,25 @@ async function acceptPeerShift(shiftId: string) {
             </h1>
 
             <p className="mt-2 text-gray-500">
-              Manage your shifts, absence requests, swap requests, and peer shift opportunities.
+              Manage your shifts, attendance, absence requests, and shift swaps.
             </p>
           </div>
 
-          <a
-            href="/role-router"
-            className="w-fit rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50"
-          >
-            Back to Workspace
-          </a>
+          <div className="flex items-center gap-3">
+            <a
+              href="/worker"
+              className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-gray-50"
+            >
+              Back to Workspace
+            </a>
+
+            <button
+              onClick={handleLogout}
+              className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -233,10 +364,21 @@ async function acceptPeerShift(shiftId: string) {
           </div>
         )}
 
-        <div className="mt-8 grid gap-6 md:grid-cols-3">
+        <div className="mt-8 grid gap-6 md:grid-cols-4">
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             <p className="text-sm font-medium text-gray-500">My Shifts</p>
             <h3 className="mt-4 text-5xl font-bold">{myShifts.length}</h3>
+          </div>
+
+          <div className="rounded-2xl bg-white p-6 shadow-sm">
+            <p className="text-sm font-medium text-gray-500">Clocked In</p>
+            <h3 className="mt-4 text-5xl font-bold">
+              {
+                attendanceRecords.filter(
+                  (record) => record.status === "clocked_in"
+                ).length
+              }
+            </h3>
           </div>
 
           <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -263,49 +405,83 @@ async function acceptPeerShift(shiftId: string) {
             <p className="mt-4 text-gray-500">No assigned shifts found.</p>
           ) : (
             <div className="mt-6 space-y-4">
-              {myShifts.map((shift) => (
-                <div key={shift.id} className="rounded-xl border p-5">
-                  <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                    <div>
-                      <h3 className="text-xl font-semibold text-black">
-                        {shift.role_name}
-                      </h3>
+              {myShifts.map((shift) => {
+                const attendance = getAttendanceForShift(shift.id);
 
-                      <p className="mt-1 text-sm text-gray-500">
-                        {shift.location}
-                      </p>
+                return (
+                  <div key={shift.id} className="rounded-xl border p-5">
+                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+                      <div>
+                        <h3 className="text-xl font-semibold text-black">
+                          {shift.role_name}
+                        </h3>
 
-                      <p className="mt-2 text-sm text-gray-600">
-                        Start: {new Date(shift.starts_at).toLocaleString()}
-                      </p>
+                        <p className="mt-1 text-sm text-gray-500">
+                          {shift.location}
+                        </p>
 
-                      <p className="text-sm text-gray-600">
-                        End: {new Date(shift.ends_at).toLocaleString()}
-                      </p>
+                        <p className="mt-2 text-sm text-gray-600">
+                          Start: {new Date(shift.starts_at).toLocaleString()}
+                        </p>
 
-                      <span className="mt-3 inline-flex rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">
-                        {shift.status}
-                      </span>
-                    </div>
+                        <p className="text-sm text-gray-600">
+                          End: {new Date(shift.ends_at).toLocaleString()}
+                        </p>
 
-                    <div className="flex flex-col gap-3 md:w-56">
-                      <button
-                        onClick={() => requestAbsence(shift.id)}
-                        className="rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-gray-50"
-                      >
-                        Request Absence
-                      </button>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="inline-flex rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">
+                            Shift: {shift.status}
+                          </span>
 
-                      <button
-                        onClick={() => requestSwap(shift.id)}
-                        className="rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white"
-                      >
-                        Offer Shift Swap
-                      </button>
+                          <span className="inline-flex rounded-full bg-gray-700 px-3 py-1 text-xs font-semibold text-white">
+                            Attendance: {attendance?.status ?? "not_started"}
+                          </span>
+
+                          {attendance?.is_late && (
+                            <span className="inline-flex rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white">
+                              Late: {attendance.minutes_late} min
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 md:w-56">
+                        {!attendance?.check_in && (
+                          <button
+                            onClick={() => clockIn(shift)}
+                            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
+                          >
+                            Clock In
+                          </button>
+                        )}
+
+                        {attendance?.check_in && !attendance?.check_out && (
+                          <button
+                            onClick={() => clockOut(shift)}
+                            className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+                          >
+                            Clock Out
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => requestAbsence(shift.id)}
+                          className="rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-gray-50"
+                        >
+                          Request Absence
+                        </button>
+
+                        <button
+                          onClick={() => requestSwap(shift.id)}
+                          className="rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white"
+                        >
+                          Offer Shift Swap
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
