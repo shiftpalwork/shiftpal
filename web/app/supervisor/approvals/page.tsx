@@ -130,9 +130,38 @@ created_at,
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadRequests();
-  }, []);
+useEffect(() => {
+  loadRequests();
+
+  const channel = supabase
+    .channel("approval-center-realtime")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "absence_requests" },
+      () => {
+        loadRequests();
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shift_swap_requests" },
+      () => {
+        loadRequests();
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shifts" },
+      () => {
+        loadRequests();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
 
 async function approveAbsence(request: AbsenceRequest) {
   if (!profile) return;

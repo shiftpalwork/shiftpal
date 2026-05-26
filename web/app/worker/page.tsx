@@ -119,9 +119,45 @@ export default function WorkerPage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadWorkerData();
-  }, []);
+useEffect(() => {
+  loadWorkerData();
+
+  const channel = supabase
+    .channel("worker-realtime")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shifts" },
+      () => {
+        loadWorkerData();
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "attendance" },
+      () => {
+        loadWorkerData();
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shift_swap_requests" },
+      () => {
+        loadWorkerData();
+      }
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "absence_requests" },
+      () => {
+        loadWorkerData();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
 
   function getAttendanceForShift(shiftId: string) {
     return attendanceRecords.find((record) => record.shift_id === shiftId);

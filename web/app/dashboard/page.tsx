@@ -50,6 +50,27 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function loadDashboardData() {
+      const channel = supabase
+  .channel("dashboard-realtime")
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "shifts" },
+    () => {
+      loadDashboardData();
+    }
+  )
+  .on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "attendance" },
+    () => {
+      loadDashboardData();
+    }
+  )
+  .subscribe();
+
+return () => {
+  supabase.removeChannel(channel);
+};
       setLoading(true);
 
       const currentProfile = await getCurrentUserProfile();

@@ -89,6 +89,19 @@ export default function SupervisorPage() {
   </p>
 </a>
 
+<a
+  href="/supervisor/attendance"
+  className="rounded-2xl bg-white p-6 shadow-sm hover:shadow-md"
+>
+  <h3 className="text-xl font-bold">
+    Attendance Console
+  </h3>
+
+  <p className="mt-2 text-sm text-gray-500">
+    Monitor clock-ins, late arrivals, absences, and live workforce presence.
+  </p>
+</a>
+
         </div>
       </section>
     </main>
