@@ -14,6 +14,12 @@ type AttendanceRecord = {
   is_late: boolean;
   minutes_late: number;
   total_minutes: number;
+
+clock_in_latitude: number | null;
+clock_in_longitude: number | null;
+clock_in_distance_meters: number | null;
+geofence_verified: boolean;
+
   profiles?: {
     full_name: string;
     email: string;
@@ -69,6 +75,12 @@ export default function SupervisorAttendancePage() {
         is_late,
         minutes_late,
         total_minutes,
+
+clock_in_latitude,
+clock_in_longitude,
+clock_in_distance_meters,
+geofence_verified,
+
         profiles (
           full_name,
           email,
@@ -236,19 +248,21 @@ useEffect(() => {
             <p className="text-gray-500">No attendance records found.</p>
           ) : (
             <div className="overflow-hidden rounded-xl border">
-              <div className="hidden grid-cols-6 bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-500 md:grid">
+              <div className="hidden grid-cols-8 bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-500 md:grid">
                 <span>Worker</span>
                 <span>Shift</span>
                 <span>Status</span>
                 <span>Clock In</span>
                 <span>Clock Out</span>
                 <span>Late</span>
+                <span>GPS</span>
+                <span>Distance</span>
               </div>
 
               {attendanceRecords.map((record) => (
                 <div
                   key={record.id}
-                  className="grid gap-3 border-t px-5 py-4 md:grid-cols-6 md:items-center"
+                  className="grid gap-3 border-t px-5 py-4 md:grid-cols-8 md:items-center"
                 >
                   <div>
                     <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
@@ -319,6 +333,33 @@ useEffect(() => {
                         On time
                       </span>
                     )}
+
+<div>
+  <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
+    GPS
+  </p>
+
+  {record.geofence_verified ? (
+    <span className="inline-flex rounded-full bg-green-600 px-3 py-1 text-xs font-semibold text-white">
+      Verified
+    </span>
+  ) : (
+    <span className="inline-flex rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white">
+      Failed
+    </span>
+  )}
+</div>
+
+<div>
+  <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
+    Distance
+  </p>
+
+  <p className="text-sm text-gray-700">
+    {record.clock_in_distance_meters ?? 0}m
+  </p>
+</div>
+
                   </div>
                 </div>
               ))}

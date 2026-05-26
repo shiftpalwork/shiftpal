@@ -11,6 +11,7 @@ type Shift = {
   starts_at: string;
   ends_at: string;
   status: string;
+  qr_code_token: string | null;
 };
 
 export default function ShiftsPage() {
@@ -19,22 +20,41 @@ export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadShifts() {
-      const { data, error } = await supabase
-        .from("shifts")
-        .select("id, role_name, location, starts_at, ends_at, status")
-        .order("starts_at", { ascending: true });
+  async function loadShifts() {
+    setLoading(true);
 
-      if (error) {
-        console.error("Shift loading error:", error);
-      }
+    const { data, error } = await supabase
+      .from("shifts")
+      .select(
+        "id, role_name, location, starts_at, ends_at, status, qr_code_token"
+      )
+      .order("starts_at", { ascending: true });
 
-      setShifts(data ?? []);
-      setLoading(false);
+    if (error) {
+      console.error("Shift loading error:", error);
     }
 
+    setShifts((data ?? []) as Shift[]);
+    setLoading(false);
+  }
+
+  useEffect(() => {
     loadShifts();
+
+    const channel = supabase
+      .channel("shifts-page-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shifts" },
+        () => {
+          loadShifts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   return (
@@ -47,7 +67,8 @@ export default function ShiftsPage() {
             </h1>
 
             <p className="mt-2 text-gray-500">
-              View and manage live workforce scheduling operations.
+              View schedules, QR verification tokens, and live workforce shift
+              operations.
             </p>
           </div>
 
@@ -60,12 +81,13 @@ export default function ShiftsPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          <div className="hidden grid-cols-5 border-b bg-gray-50 px-6 py-4 text-sm font-semibold text-gray-500 md:grid">
+          <div className="hidden grid-cols-6 border-b bg-gray-50 px-6 py-4 text-sm font-semibold text-gray-500 md:grid">
             <span>Role</span>
             <span>Location</span>
             <span>Start</span>
             <span>End</span>
             <span>Status</span>
+            <span>QR Token</span>
           </div>
 
           {loading ? (
@@ -80,16 +102,14 @@ export default function ShiftsPage() {
             shifts.map((shift) => (
               <div
                 key={shift.id}
-                className="grid gap-3 border-b px-6 py-5 last:border-b-0 md:grid-cols-5 md:items-center"
+                className="grid gap-3 border-b px-6 py-5 last:border-b-0 md:grid-cols-6 md:items-center"
               >
                 <div>
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     Role
                   </p>
 
-                  <p className="font-semibold text-black">
-                    {shift.role_name}
-                  </p>
+                  <p className="font-semibold text-black">{shift.role_name}</p>
                 </div>
 
                 <div>
@@ -127,6 +147,16 @@ export default function ShiftsPage() {
 
                   <span className="inline-flex rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">
                     {shift.status}
+                  </span>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
+                    QR Token
+                  </p>
+
+                  <span className="inline-flex rounded-xl bg-gray-100 px-3 py-2 font-mono text-sm font-bold tracking-widest text-black">
+                    {shift.qr_code_token ?? "NO TOKEN"}
                   </span>
                 </div>
               </div>

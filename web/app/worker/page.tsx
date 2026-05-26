@@ -13,6 +13,10 @@ type Shift = {
   status: string;
   worker_id: string;
   company_id?: string;
+  latitude: number | null;
+  longitude: number | null;
+  geofence_radius_meters: number | null;
+  qr_code_token: string | null;
 };
 
 type AttendanceRecord = {
@@ -25,6 +29,8 @@ type AttendanceRecord = {
   is_late: boolean;
   minutes_late: number;
   total_minutes: number;
+  geofence_verified: boolean;
+  clock_in_distance_meters: number | null;
 };
 
 export default function WorkerPage() {
@@ -33,15 +39,54 @@ export default function WorkerPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [myShifts, setMyShifts] = useState<Shift[]>([]);
   const [availableShifts, setAvailableShifts] = useState<Shift[]>([]);
-  const [attendanceRecords, setAttendanceRecords] = useState<
-    AttendanceRecord[]
-  >([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [qrInputs, setQrInputs] = useState<Record<string, string>>({});
+
 
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/login";
+  }
+
+  function getDistanceMeters(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number
+  ) {
+    const earthRadius = 6371000;
+    const toRadians = (value: number) => (value * Math.PI) / 180;
+
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRadians(lat1)) *
+        Math.cos(toRadians(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+
+    return Math.round(
+      earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    );
+  }
+
+  function getBrowserLocation(): Promise<GeolocationPosition> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Geolocation is not supported by this browser."));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      });
+    });
   }
 
   async function loadWorkerData() {
@@ -63,9 +108,9 @@ export default function WorkerPage() {
 
     const { data: assignedShifts, error: assignedError } = await supabase
       .from("shifts")
-      .select(
-        "id, role_name, location, starts_at, ends_at, status, worker_id, company_id"
-      )
+.select(
+  "id, role_name, location, starts_at, ends_at, status, worker_id, company_id, latitude, longitude, geofence_radius_meters, qr_code_token"
+)
       .eq("worker_id", currentProfile.id)
       .order("starts_at", { ascending: true });
 
@@ -87,7 +132,11 @@ export default function WorkerPage() {
           ends_at,
           status,
           worker_id,
-          company_id
+          company_id,
+          latitude,
+          longitude,
+          geofence_radius_meters,
+          qr_code_token
         )
       `)
       .eq("status", "pending");
@@ -105,7 +154,7 @@ export default function WorkerPage() {
     const { data: attendanceData, error: attendanceError } = await supabase
       .from("attendance")
       .select(
-        "id, shift_id, worker_id, status, check_in, check_out, is_late, minutes_late, total_minutes"
+        "id, shift_id, worker_id, status, check_in, check_out, is_late, minutes_late, total_minutes, geofence_verified, clock_in_distance_meters"
       )
       .eq("worker_id", currentProfile.id);
 
@@ -113,51 +162,27 @@ export default function WorkerPage() {
       console.error("Attendance loading error:", attendanceError);
     }
 
-    setMyShifts(assignedShifts ?? []);
-    setAvailableShifts(peerShifts);
+    setMyShifts((assignedShifts ?? []) as Shift[]);
+    setAvailableShifts(peerShifts as Shift[]);
     setAttendanceRecords((attendanceData ?? []) as AttendanceRecord[]);
     setLoading(false);
   }
 
-useEffect(() => {
-  loadWorkerData();
+  useEffect(() => {
+    loadWorkerData();
 
-  const channel = supabase
-    .channel("worker-realtime")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "shifts" },
-      () => {
-        loadWorkerData();
-      }
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "attendance" },
-      () => {
-        loadWorkerData();
-      }
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "shift_swap_requests" },
-      () => {
-        loadWorkerData();
-      }
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "absence_requests" },
-      () => {
-        loadWorkerData();
-      }
-    )
-    .subscribe();
+    const channel = supabase
+      .channel("worker-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "shifts" }, loadWorkerData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, loadWorkerData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shift_swap_requests" }, loadWorkerData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "absence_requests" }, loadWorkerData)
+      .subscribe();
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, []);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   function getAttendanceForShift(shiftId: string) {
     return attendanceRecords.find((record) => record.shift_id === shiftId);
@@ -175,35 +200,83 @@ useEffect(() => {
       return;
     }
 
-    const now = new Date();
-    const scheduledStart = new Date(shift.starts_at);
-
-    const minutesLate = Math.max(
-      0,
-      Math.floor((now.getTime() - scheduledStart.getTime()) / 60000)
-    );
-
-    const { error } = await supabase.from("attendance").insert({
-      shift_id: shift.id,
-      worker_id: profile.id,
-      company_id: profile.company_id,
-      check_in: now.toISOString(),
-      check_out: null,
-      scheduled_start: shift.starts_at,
-      scheduled_end: shift.ends_at,
-      status: "clocked_in",
-      is_late: minutesLate > 0,
-      minutes_late: minutesLate,
-      total_minutes: 0,
-    });
-
-    if (error) {
-      setMessage(`Clock in failed: ${error.message}`);
+    if (shift.latitude === null || shift.longitude === null) {
+      setMessage("This shift does not have workplace GPS coordinates.");
       return;
     }
 
-    setMessage("Clock in successful.");
-    await loadWorkerData();
+    const enteredQrToken = qrInputs[shift.id]?.trim().toUpperCase();
+
+if (!enteredQrToken) {
+  setMessage("Enter the shift QR token before clocking in.");
+  return;
+}
+
+if (enteredQrToken !== shift.qr_code_token) {
+  setMessage("Invalid QR token. Please use the correct shift QR code.");
+  return;
+}
+
+    try {
+      const position = await getBrowserLocation();
+
+      const workerLatitude = position.coords.latitude;
+      const workerLongitude = position.coords.longitude;
+
+      const distanceMeters = getDistanceMeters(
+        workerLatitude,
+        workerLongitude,
+        Number(shift.latitude),
+        Number(shift.longitude)
+      );
+
+      const allowedRadius = shift.geofence_radius_meters ?? 250;
+
+      if (distanceMeters > allowedRadius) {
+        setMessage(
+          `Clock in blocked. You are ${distanceMeters}m away from the workplace. Allowed radius is ${allowedRadius}m.`
+        );
+        return;
+      }
+
+      const now = new Date();
+      const scheduledStart = new Date(shift.starts_at);
+
+      const minutesLate = Math.max(
+        0,
+        Math.floor((now.getTime() - scheduledStart.getTime()) / 60000)
+      );
+
+      const { error } = await supabase.from("attendance").insert({
+        shift_id: shift.id,
+        worker_id: profile.id,
+        company_id: profile.company_id,
+        check_in: now.toISOString(),
+        check_out: null,
+        scheduled_start: shift.starts_at,
+        scheduled_end: shift.ends_at,
+        status: "clocked_in",
+        is_late: minutesLate > 0,
+        minutes_late: minutesLate,
+        total_minutes: 0,
+        clock_in_latitude: workerLatitude,
+        clock_in_longitude: workerLongitude,
+        clock_in_distance_meters: distanceMeters,
+        geofence_verified: true,
+        qr_verified: true,
+        qr_token_used: enteredQrToken,
+      });
+
+      if (error) {
+        setMessage(`Clock in failed: ${error.message}`);
+        return;
+      }
+
+      setMessage(`Clock in successful. Geofence verified at ${distanceMeters}m.`);
+      await loadWorkerData();
+    } catch (error: any) {
+      setMessage(`Location access failed: ${error.message}`);
+    }
   }
 
   async function clockOut(shift: Shift) {
@@ -259,17 +332,13 @@ useEffect(() => {
       return;
     }
 
-    const requestedDate = shift.starts_at.slice(0, 10);
-
-    const { error: requestError } = await supabase
-      .from("absence_requests")
-      .insert({
-        worker_id: profile.id,
-        shift_id: shiftId,
-        reason: "Worker requested absence",
-        requested_date: requestedDate,
-        status: "pending",
-      });
+    const { error: requestError } = await supabase.from("absence_requests").insert({
+      worker_id: profile.id,
+      shift_id: shiftId,
+      reason: "Worker requested absence",
+      requested_date: shift.starts_at.slice(0, 10),
+      status: "pending",
+    });
 
     if (requestError) {
       setMessage(`Absence request failed: ${requestError.message}`);
@@ -278,9 +347,7 @@ useEffect(() => {
 
     const { error: shiftError } = await supabase
       .from("shifts")
-      .update({
-        status: "absence_requested",
-      })
+      .update({ status: "absence_requested" })
       .eq("id", shiftId);
 
     if (shiftError) {
@@ -314,9 +381,7 @@ useEffect(() => {
 
     const { error: shiftError } = await supabase
       .from("shifts")
-      .update({
-        status: "swap_requested",
-      })
+      .update({ status: "swap_requested" })
       .eq("id", shiftId);
 
     if (shiftError) {
@@ -409,11 +474,7 @@ useEffect(() => {
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             <p className="text-sm font-medium text-gray-500">Clocked In</p>
             <h3 className="mt-4 text-5xl font-bold">
-              {
-                attendanceRecords.filter(
-                  (record) => record.status === "clocked_in"
-                ).length
-              }
+              {attendanceRecords.filter((record) => record.status === "clocked_in").length}
             </h3>
           </div>
 
@@ -421,9 +482,7 @@ useEffect(() => {
             <p className="text-sm font-medium text-gray-500">
               Available Peer Shifts
             </p>
-            <h3 className="mt-4 text-5xl font-bold">
-              {availableShifts.length}
-            </h3>
+            <h3 className="mt-4 text-5xl font-bold">{availableShifts.length}</h3>
           </div>
 
           <div className="rounded-2xl bg-white p-6 shadow-sm">
@@ -473,6 +532,12 @@ useEffect(() => {
                             Attendance: {attendance?.status ?? "not_started"}
                           </span>
 
+                          {attendance?.geofence_verified && (
+                            <span className="inline-flex rounded-full bg-green-600 px-3 py-1 text-xs font-semibold text-white">
+                              GPS verified: {attendance.clock_in_distance_meters}m
+                            </span>
+                          )}
+
                           {attendance?.is_late && (
                             <span className="inline-flex rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white">
                               Late: {attendance.minutes_late} min
@@ -482,15 +547,28 @@ useEffect(() => {
                       </div>
 
                       <div className="flex flex-col gap-3 md:w-56">
-                        {!attendance?.check_in && (
-                          <button
-                            onClick={() => clockIn(shift)}
-                            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
-                          >
-                            Clock In
-                          </button>
-                        )}
+{!attendance?.check_in && (
+  <div className="grid gap-2">
+    <input
+      value={qrInputs[shift.id] ?? ""}
+      onChange={(event) =>
+        setQrInputs((current) => ({
+          ...current,
+          [shift.id]: event.target.value,
+        }))
+      }
+      placeholder="Enter shift QR token"
+      className="rounded-xl border px-4 py-3 text-sm"
+    />
 
+    <button
+      onClick={() => clockIn(shift)}
+      className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
+    >
+      Clock In
+    </button>
+  </div>
+)}
                         {attendance?.check_in && !attendance?.check_out && (
                           <button
                             onClick={() => clockOut(shift)}
@@ -523,9 +601,7 @@ useEffect(() => {
         </div>
 
         <div className="mt-8 rounded-2xl bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-black">
-            Available Peer Shifts
-          </h2>
+          <h2 className="text-2xl font-bold text-black">Available Peer Shifts</h2>
 
           <p className="mt-2 text-sm text-gray-500">
             These are shifts other workers have offered for swap.
