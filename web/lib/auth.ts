@@ -1,16 +1,36 @@
-import { createBrowserSupabaseClient } from "./supabaseClient";
+import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
 
-export async function getCurrentUser() {
+export type UserRole = "admin" | "supervisor" | "worker";
+
+export type UserProfile = {
+  id: string;
+  full_name: string;
+  email: string;
+  role: UserRole;
+  company_id: string;
+};
+
+export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   const supabase = createBrowserSupabaseClient();
 
   const {
     data: { user },
-    error,
+    error: userError,
   } = await supabase.auth.getUser();
 
-  if (error || !user) {
+  if (userError || !user?.email) {
     return null;
   }
 
-  return user;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, email, role, company_id")
+    .eq("email", user.email)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return data as UserProfile;
 }

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
+import { getCurrentUserProfile, type UserProfile } from "@/lib/auth";
+
 
 type Shift = {
   id: string;
@@ -19,6 +21,9 @@ export default function DashboardPage() {
   const [attendanceCount, setAttendanceCount] = useState(0);
   const [workerCount, setWorkerCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -28,6 +33,15 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadDashboardData() {
       setLoading(true);
+
+      const currentProfile = await getCurrentUserProfile();
+
+       if (!currentProfile) {
+         window.location.href = "/login";
+        return;
+        }
+
+setProfile(currentProfile);
 
       const { data: shiftData, error: shiftError } = await supabase
         .from("shifts")
@@ -111,8 +125,18 @@ export default function DashboardPage() {
             Operations Dashboard
           </h2>
 
+<div className="mt-3 flex items-center gap-3">
+  <span className="rounded-full bg-black px-4 py-1 text-sm font-semibold uppercase tracking-wide text-white">
+    {profile?.role ?? "worker"}
+  </span>
+
+  <span className="text-sm text-gray-500">
+    Logged in as {profile?.full_name}
+  </span>
+</div>
+
           <p className="mt-2 text-gray-500">
-            Real-time workforce coordination and scheduling intelligence.
+            Real-time workforce coordination and scheduling intelligence for {profile?.full_name ?? "your team"}.
           </p>
         </div>
 
