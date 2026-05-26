@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabaseClient";
+import { ShiftForm } from "@/components/ShiftForm";
 
 type Shift = {
   id: string;
@@ -41,7 +42,10 @@ export default function ShiftsPage() {
       <section className="mx-auto max-w-7xl">
         <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
-            <h1 className="text-4xl font-bold text-black">Shift Management</h1>
+            <h1 className="text-4xl font-bold text-black">
+              Shift Management
+            </h1>
+
             <p className="mt-2 text-gray-500">
               View and manage live workforce scheduling operations.
             </p>
@@ -82,13 +86,17 @@ export default function ShiftsPage() {
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     Role
                   </p>
-                  <p className="font-semibold text-black">{shift.role_name}</p>
+
+                  <p className="font-semibold text-black">
+                    {shift.role_name}
+                  </p>
                 </div>
 
                 <div>
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     Location
                   </p>
+
                   <p className="text-gray-700">{shift.location}</p>
                 </div>
 
@@ -96,6 +104,7 @@ export default function ShiftsPage() {
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     Start
                   </p>
+
                   <p className="text-gray-700">
                     {new Date(shift.starts_at).toLocaleString()}
                   </p>
@@ -105,6 +114,7 @@ export default function ShiftsPage() {
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     End
                   </p>
+
                   <p className="text-gray-700">
                     {new Date(shift.ends_at).toLocaleString()}
                   </p>
@@ -114,6 +124,7 @@ export default function ShiftsPage() {
                   <p className="text-xs font-medium uppercase text-gray-400 md:hidden">
                     Status
                   </p>
+
                   <span className="inline-flex rounded-full bg-black px-3 py-1 text-xs font-semibold text-white">
                     {shift.status}
                   </span>
@@ -121,6 +132,14 @@ export default function ShiftsPage() {
               </div>
             ))
           )}
+        </div>
+
+        <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_420px]">
+          <div></div>
+
+          <div>
+            <ShiftForm />
+          </div>
         </div>
       </section>
     </main>
