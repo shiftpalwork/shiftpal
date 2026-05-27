@@ -39,6 +39,26 @@ type SwapRequest = {
   } | null;
 };
 
+type OpenShiftCoverRequest = {
+  id: string;
+  status: string;
+  shift_id: string;
+
+  shifts?: {
+    id: string;
+    role_name: string;
+    location: string;
+    starts_at: string;
+    ends_at: string;
+  } | null;
+
+  cover_worker?: {
+    id: string;
+    full_name: string;
+    email: string;
+  } | null;
+};
+
 export default function SupervisorApprovalsPage() {
   const supabase = createBrowserSupabaseClient();
 
@@ -47,6 +67,9 @@ export default function SupervisorApprovalsPage() {
   const [swapRequests, setSwapRequests] = useState<SwapRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [coverRequests, setCoverRequests] = useState<
+  OpenShiftCoverRequest[]
+>([]);
 
   async function loadRequests() {
     setLoading(true);
@@ -79,11 +102,11 @@ reason,
 requested_date,
 status,
 created_at,
-        profiles (
-          full_name,
-          email,
-          role
-        )
+        profiles!absence_requests_worker_id_fkey (
+  full_name,
+  email,
+  role
+)
       `
       )
       .eq("status", "pending")
@@ -93,6 +116,35 @@ created_at,
       console.error("Absence request loading error:", absenceError);
       setMessage(`Could not load absence requests: ${absenceError.message}`);
     }
+
+    const { data: coverData, error: coverError } = await supabase
+  .from("open_shift_cover_requests")
+  .select(`
+    id,
+    status,
+    shift_id,
+
+    shifts (
+      id,
+      role_name,
+      location,
+      starts_at,
+      ends_at
+    ),
+
+    cover_worker:profiles!open_shift_cover_requests_cover_worker_id_fkey (
+      id,
+      full_name,
+      email
+    )
+  `)
+  .eq("status", "pending");
+
+if (coverError) {
+  console.error("Cover request loading error:", coverError);
+}
+
+
 
     const { data: swaps, error: swapError } = await supabase
       .from("shift_swap_requests")
@@ -126,6 +178,7 @@ created_at,
     }
 
     setAbsenceRequests((absences ?? []) as AbsenceRequest[]);
+    setCoverRequests((coverData ?? []) as OpenShiftCoverRequest[]);
     setSwapRequests((swaps ?? []) as SwapRequest[]);
     setLoading(false);
   }
@@ -187,9 +240,8 @@ async function approveAbsence(request: AbsenceRequest) {
     const { error: shiftError } = await supabase
       .from("shifts")
       .update({
-        status: "open",
-        worker_id: null,
-      })
+  status: "open_absence_cover_needed",
+})
       .eq("id", request.shift_id);
 
     if (shiftError) {
@@ -235,6 +287,92 @@ async function rejectAbsence(request: AbsenceRequest) {
 
   setMessage("Absence rejected. Shift restored to scheduled.");
   await loadRequests();
+}
+
+async function approveCoverRequest(
+  request: OpenShiftCoverRequest
+) {
+  if (!profile) return;
+
+  if (!request.cover_worker || !request.shifts) {
+    return;
+  }
+
+  const { error: shiftError } = await supabase
+    .from("shifts")
+    .update({
+      worker_id: request.cover_worker.id,
+      status: "assigned",
+    })
+    .eq("id", request.shift_id);
+
+  if (shiftError) {
+    setMessage(
+      `Shift reassignment failed: ${shiftError.message}`
+    );
+    return;
+  }
+
+  const { error: requestError } = await supabase
+    .from("open_shift_cover_requests")
+    .update({
+      status: "approved",
+      approved_by: profile.id,
+      approved_at: new Date().toISOString(),
+    })
+    .eq("id", request.id);
+
+  if (requestError) {
+    setMessage(
+      `Cover request approval failed: ${requestError.message}`
+    );
+    return;
+  }
+
+  await supabase.from("notifications").insert({
+    user_id: request.cover_worker.id,
+    title: "Cover Request Approved",
+    message:
+      "You have been assigned to cover an open shift.",
+    type: "cover_approved",
+  });
+
+  setMessage("Open shift reassigned successfully.");
+
+  await loadApprovals();
+}
+
+async function rejectCoverRequest(
+  request: OpenShiftCoverRequest
+) {
+  const { error } = await supabase
+    .from("open_shift_cover_requests")
+    .update({
+      status: "rejected",
+      rejected_at: new Date().toISOString(),
+    })
+    .eq("id", request.id);
+
+  if (error) {
+    setMessage(
+      `Cover rejection failed: ${error.message}`
+    );
+    return;
+  }
+
+  if (request.cover_worker) {
+    await supabase.from("notifications").insert({
+      user_id: request.cover_worker.id,
+      title: "Cover Request Rejected",
+      message:
+        "Your open shift cover request was rejected.",
+      type: "cover_rejected",
+    });
+  }
+
+  setMessage("Cover request rejected.");
+
+  await loadApprovals();
 }
 
   async function approveSwap(request: SwapRequest) {
@@ -509,6 +647,77 @@ async function rejectAbsence(request: AbsenceRequest) {
             </div>
           )}
         </div>
+
+        <div className="mt-8 rounded-2xl bg-white p-6 shadow-sm">
+  <h2 className="text-2xl font-bold text-black">
+    Open Shift Cover Requests
+  </h2>
+
+  <p className="mt-2 text-sm text-gray-500">
+    Workers requesting to cover approved absences.
+  </p>
+
+  {coverRequests.length === 0 ? (
+    <p className="mt-4 text-gray-500">
+      No cover requests pending.
+    </p>
+  ) : (
+    <div className="mt-6 space-y-4">
+      {coverRequests.map((request) => (
+        <div
+          key={request.id}
+          className="rounded-xl border p-5"
+        >
+          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+            <div>
+              <h3 className="text-xl font-semibold text-black">
+                {request.shifts?.role_name}
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                {request.shifts?.location}
+              </p>
+
+              <p className="mt-2 text-sm text-gray-600">
+                Cover worker:
+                {" "}
+                {request.cover_worker?.full_name}
+              </p>
+
+              <p className="text-sm text-gray-600">
+                {request.cover_worker?.email}
+              </p>
+
+              <span className="mt-3 inline-flex rounded-full bg-orange-600 px-3 py-1 text-xs font-semibold text-white">
+                Pending Cover Approval
+              </span>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() =>
+                  approveCoverRequest(request)
+                }
+                className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white"
+              >
+                Approve
+              </button>
+
+              <button
+                onClick={() =>
+                  rejectCoverRequest(request)
+                }
+                className="rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
       </section>
     </main>
   );

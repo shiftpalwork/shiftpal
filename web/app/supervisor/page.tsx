@@ -31,7 +31,7 @@ export default function SupervisorPage() {
     <main className="min-h-screen bg-gray-100 px-6 py-10">
       <section className="mx-auto max-w-7xl">
         <h1 className="text-4xl font-bold text-black">
-          Supervisor Workspace
+          Supervisor Workspace<NotificationBell />
         </h1>
 
         <p className="mt-2 text-gray-500">

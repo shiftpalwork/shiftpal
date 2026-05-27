@@ -40,23 +40,18 @@ export default function WorkerPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [myShifts, setMyShifts] = useState<Shift[]>([]);
   const [availableShifts, setAvailableShifts] = useState<Shift[]>([]);
+  const [openCoverShifts, setOpenCoverShifts] = useState<Shift[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [qrInputs, setQrInputs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [qrInputs, setQrInputs] = useState<Record<string, string>>({});
-
 
   async function handleLogout() {
     await supabase.auth.signOut();
     window.location.href = "/login";
   }
 
-  function getDistanceMeters(
-    lat1: number,
-    lon1: number,
-    lat2: number,
-    lon2: number
-  ) {
+  function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
     const earthRadius = 6371000;
     const toRadians = (value: number) => (value * Math.PI) / 180;
 
@@ -90,21 +85,34 @@ export default function WorkerPage() {
     });
   }
 
-async function getSupervisorId() {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("role", "supervisor")
-    .limit(1)
-    .single();
+  async function getSupervisorId() {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("role", "supervisor")
+      .limit(1)
+      .single();
 
-  if (error) {
-    console.error("Supervisor lookup error:", error);
-    return null;
+    if (error) {
+      console.error("Supervisor lookup error:", error);
+      return null;
+    }
+
+    return data?.id ?? null;
   }
 
-  return data?.id ?? null;
-}
+  async function notifySupervisor(title: string, notificationMessage: string, type: string) {
+    const supervisorId = await getSupervisorId();
+
+    if (!supervisorId) return;
+
+    await supabase.from("notifications").insert({
+      user_id: supervisorId,
+      title,
+      message: notificationMessage,
+      type,
+    });
+  }
 
   async function loadWorkerData() {
     setLoading(true);
@@ -125,9 +133,9 @@ async function getSupervisorId() {
 
     const { data: assignedShifts, error: assignedError } = await supabase
       .from("shifts")
-.select(
-  "id, role_name, location, starts_at, ends_at, status, worker_id, company_id, latitude, longitude, geofence_radius_meters, qr_code_token"
-)
+      .select(
+        "id, role_name, location, starts_at, ends_at, status, worker_id, company_id, latitude, longitude, geofence_radius_meters, qr_code_token"
+      )
       .eq("worker_id", currentProfile.id)
       .order("starts_at", { ascending: true });
 
@@ -168,6 +176,19 @@ async function getSupervisorId() {
         ?.filter(Boolean)
         ?.filter((shift: any) => shift.worker_id !== currentProfile.id) ?? [];
 
+const { data: openCoverData, error: openCoverError } = await supabase
+  .from("shifts")
+  .select(
+    "id, role_name, location, starts_at, ends_at, status, worker_id, company_id, latitude, longitude, geofence_radius_meters, qr_code_token"
+  )
+  .eq("status", "open_absence_cover_needed")
+  .neq("worker_id", currentProfile.id)
+  .order("starts_at", { ascending: true });
+
+if (openCoverError) {
+  console.error("Open cover shift loading error:", openCoverError);
+}
+
     const { data: attendanceData, error: attendanceError } = await supabase
       .from("attendance")
       .select(
@@ -181,6 +202,7 @@ async function getSupervisorId() {
 
     setMyShifts((assignedShifts ?? []) as Shift[]);
     setAvailableShifts(peerShifts as Shift[]);
+    setOpenCoverShifts((openCoverData ?? []) as Shift[]);
     setAttendanceRecords((attendanceData ?? []) as AttendanceRecord[]);
     setLoading(false);
   }
@@ -190,10 +212,18 @@ async function getSupervisorId() {
 
     const channel = supabase
       .channel("worker-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "shifts" }, loadWorkerData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, loadWorkerData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "shift_swap_requests" }, loadWorkerData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "absence_requests" }, loadWorkerData)
+      .on("postgres_changes", { event: "*", schema: "public", table: "shifts" }, () => {
+        loadWorkerData();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, () => {
+        loadWorkerData();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "shift_swap_requests" }, () => {
+        loadWorkerData();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "absence_requests" }, () => {
+        loadWorkerData();
+      })
       .subscribe();
 
     return () => {
@@ -224,15 +254,15 @@ async function getSupervisorId() {
 
     const enteredQrToken = qrInputs[shift.id]?.trim().toUpperCase();
 
-if (!enteredQrToken) {
-  setMessage("Enter the shift QR token before clocking in.");
-  return;
-}
+    if (!enteredQrToken) {
+      setMessage("Enter the shift QR token before clocking in.");
+      return;
+    }
 
-if (enteredQrToken !== shift.qr_code_token) {
-  setMessage("Invalid QR token. Please use the correct shift QR code.");
-  return;
-}
+    if (enteredQrToken !== shift.qr_code_token) {
+      setMessage("Invalid QR token. Please use the correct shift QR code.");
+      return;
+    }
 
     try {
       const position = await getBrowserLocation();
@@ -289,7 +319,7 @@ if (enteredQrToken !== shift.qr_code_token) {
         return;
       }
 
-      setMessage(`Clock in successful. Geofence verified at ${distanceMeters}m.`);
+      setMessage(`Clock in successful. GPS and QR verified at ${distanceMeters}m.`);
       await loadWorkerData();
     } catch (error: any) {
       setMessage(`Location access failed: ${error.message}`);
@@ -372,34 +402,28 @@ if (enteredQrToken !== shift.qr_code_token) {
       return;
     }
 
-   const supervisorId = await getSupervisorId();
+    await notifySupervisor(
+      "New Absence Request",
+      `${profile.full_name} requested absence for a scheduled shift.`,
+      "absence_request"
+    );
 
-if (supervisorId) {
-  await supabase.from("notifications").insert({
-    user_id: supervisorId,
-    title: "New Absence Request",
-    message: `${profile.full_name} requested absence for a scheduled shift.`,
-    type: "absence_request",
-  });
-}
-
-setMessage("Absence request submitted successfully.");
-await loadWorkerData();
+    setMessage("Absence request submitted successfully.");
+    await loadWorkerData();
+  }
 
   async function requestSwap(shiftId: string) {
     if (!profile) return;
 
     setMessage("");
 
-    const { error: requestError } = await supabase
-      .from("shift_swap_requests")
-      .insert({
-        requester_id: profile.id,
-        target_worker_id: null,
-        shift_id: shiftId,
-        reason: "Worker requested shift swap",
-        status: "pending",
-      });
+    const { error: requestError } = await supabase.from("shift_swap_requests").insert({
+      requester_id: profile.id,
+      target_worker_id: null,
+      shift_id: shiftId,
+      reason: "Worker requested shift swap",
+      status: "pending",
+    });
 
     if (requestError) {
       setMessage(`Swap request failed: ${requestError.message}`);
@@ -416,19 +440,15 @@ await loadWorkerData();
       return;
     }
 
-const supervisorId = await getSupervisorId();
+    await notifySupervisor(
+      "New Shift Swap Request",
+      `${profile.full_name} offered a shift for swap.`,
+      "swap_request"
+    );
 
-if (supervisorId) {
-  await supabase.from("notifications").insert({
-    user_id: supervisorId,
-    title: "New Shift Swap Request",
-    message: `${profile.full_name} offered a shift for swap.`,
-    type: "swap_request",
-  });
-}
-
-setMessage("Shift swap request submitted successfully.");
-await loadWorkerData();
+    setMessage("Shift swap request submitted successfully.");
+    await loadWorkerData();
+  }
 
   async function acceptPeerShift(shiftId: string) {
     if (!profile) return;
@@ -449,19 +469,43 @@ await loadWorkerData();
       return;
     }
 
-const supervisorId = await getSupervisorId();
+    await notifySupervisor(
+      "Shift Swap Accepted",
+      `${profile.full_name} accepted a peer shift swap.`,
+      "swap_acceptance"
+    );
 
-if (supervisorId) {
-  await supabase.from("notifications").insert({
-    user_id: supervisorId,
-    title: "Shift Swap Accepted",
-    message: `${profile.full_name} accepted a peer shift swap.`,
-    type: "swap_acceptance",
-  });
+    setMessage("Shift acceptance submitted. Waiting for supervisor approval.");
+    await loadWorkerData();
+  }
+
+async function requestOpenShiftCover(shift: Shift) {
+  if (!profile) return;
+
+  setMessage("");
+
+  const { error } = await supabase
+    .from("open_shift_cover_requests")
+    .insert({
+      shift_id: shift.id,
+      original_worker_id: shift.worker_id,
+      cover_worker_id: profile.id,
+      status: "pending",
+    });
+
+  if (error) {
+    setMessage(`Cover request failed: ${error.message}`);
+    return;
+  }
+
+  await notifySupervisor(
+    "Open Shift Cover Request",
+    `${profile.full_name} offered to cover an open shift.`,
+    "open_shift_cover"
+  );
+
+  setMessage("Cover request submitted successfully.");
 }
-
-setMessage("Shift acceptance submitted. Waiting for supervisor approval.");
-await loadWorkerData();
 
   return (
     <main className="min-h-screen bg-gray-100 px-6 py-10">
@@ -473,11 +517,11 @@ await loadWorkerData();
             </h1>
 
             <p className="mt-2 text-gray-500">
-              Manage your shifts, attendance, absence requests, and shift swaps.
+              Manage your shifts, attendance, absence requests, leave, and shift swaps.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <a
               href="/worker"
               className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-gray-50"
@@ -485,11 +529,19 @@ await loadWorkerData();
               Back to Workspace
             </a>
 
+            <NotificationBell />
+
+            <a
+              href="/worker/leave"
+              className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-gray-50"
+            >
+              Leave
+            </a>
+
             <button
               onClick={handleLogout}
               className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
             >
-              <NotificationBell />
               Logout
             </button>
           </div>
@@ -527,11 +579,65 @@ await loadWorkerData();
           </div>
 
           <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <p className="text-sm font-medium text-gray-500">
-              Available Peer Shifts
-            </p>
+            <p className="text-sm font-medium text-gray-500">Available Peer Shifts</p>
             <h3 className="mt-4 text-5xl font-bold">{availableShifts.length}</h3>
           </div>
+
+
+          <div className="mt-8 rounded-2xl bg-white p-6 shadow-sm">
+  <h2 className="text-2xl font-bold text-black">
+    Open Shift Cover Requests
+  </h2>
+
+  <p className="mt-2 text-sm text-gray-500">
+    These shifts require replacement workers due to approved absences.
+  </p>
+
+  {openCoverShifts.length === 0 ? (
+    <p className="mt-4 text-gray-500">
+      No open cover shifts available.
+    </p>
+  ) : (
+    <div className="mt-6 space-y-4">
+      {openCoverShifts.map((shift) => (
+        <div key={shift.id} className="rounded-xl border p-5">
+          <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+            <div>
+              <h3 className="text-xl font-semibold text-black">
+                {shift.role_name}
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                {shift.location}
+              </p>
+
+              <p className="mt-2 text-sm text-gray-600">
+                Start: {new Date(shift.starts_at).toLocaleString()}
+              </p>
+
+              <p className="text-sm text-gray-600">
+                End: {new Date(shift.ends_at).toLocaleString()}
+              </p>
+
+              <span className="mt-3 inline-flex rounded-full bg-orange-600 px-3 py-1 text-xs font-semibold text-white">
+                Open Cover Needed
+              </span>
+            </div>
+
+            <button
+              onClick={() => requestOpenShiftCover(shift)}
+              className="rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white"
+            >
+              Offer To Cover Shift
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
+
+
 
           <div className="rounded-2xl bg-white p-6 shadow-sm">
             <p className="text-sm font-medium text-gray-500">Portal Status</p>
@@ -559,9 +665,7 @@ await loadWorkerData();
                           {shift.role_name}
                         </h3>
 
-                        <p className="mt-1 text-sm text-gray-500">
-                          {shift.location}
-                        </p>
+                        <p className="mt-1 text-sm text-gray-500">{shift.location}</p>
 
                         <p className="mt-2 text-sm text-gray-600">
                           Start: {new Date(shift.starts_at).toLocaleString()}
@@ -595,28 +699,29 @@ await loadWorkerData();
                       </div>
 
                       <div className="flex flex-col gap-3 md:w-56">
-{!attendance?.check_in && (
-  <div className="grid gap-2">
-    <input
-      value={qrInputs[shift.id] ?? ""}
-      onChange={(event) =>
-        setQrInputs((current) => ({
-          ...current,
-          [shift.id]: event.target.value,
-        }))
-      }
-      placeholder="Enter shift QR token"
-      className="rounded-xl border px-4 py-3 text-sm"
-    />
+                        {!attendance?.check_in && (
+                          <div className="grid gap-2">
+                            <input
+                              value={qrInputs[shift.id] ?? ""}
+                              onChange={(event) =>
+                                setQrInputs((current) => ({
+                                  ...current,
+                                  [shift.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Enter shift QR token"
+                              className="rounded-xl border px-4 py-3 text-sm"
+                            />
 
-    <button
-      onClick={() => clockIn(shift)}
-      className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
-    >
-      Clock In
-    </button>
-  </div>
-)}
+                            <button
+                              onClick={() => clockIn(shift)}
+                              className="rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
+                            >
+                              Clock In
+                            </button>
+                          </div>
+                        )}
+
                         {attendance?.check_in && !attendance?.check_out && (
                           <button
                             onClick={() => clockOut(shift)}
@@ -667,9 +772,7 @@ await loadWorkerData();
                         {shift.role_name}
                       </h3>
 
-                      <p className="mt-1 text-sm text-gray-500">
-                        {shift.location}
-                      </p>
+                      <p className="mt-1 text-sm text-gray-500">{shift.location}</p>
 
                       <p className="mt-2 text-sm text-gray-600">
                         Start: {new Date(shift.starts_at).toLocaleString()}
